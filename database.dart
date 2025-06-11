@@ -1,11 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-// import 'package:firebase_core/firebase_core.dart';
-// import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
-// import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:convert';
 
 // ===========================================
-// CONFIGURAÇÃO SUPABASE (RECOMENDADO)
+// CONFIGURAÇÃO SUPABASE
 // ===========================================
 
 class SupabaseConfig {
@@ -51,7 +48,7 @@ class User {
     id: json['id'],
     name: json['name'],
     email: json['email'],
-    password: json['password'],
+    password: json['password'] ?? '',
     createdAt: json['created_at'] != null ? DateTime.parse(json['created_at']) : null,
   );
 }
@@ -109,21 +106,28 @@ class SupabaseDataService {
   // AUTENTICAÇÃO
   static Future<bool> register(String name, String email, String password) async {
     try {
+      print('Tentando registrar usuário: $email');
+      
       // 1. Criar usuário no Supabase Auth
       final authResponse = await supabase.auth.signUp(
         email: email,
         password: password,
       );
       
+      print('Resposta do auth: ${authResponse.user?.id}');
+      
       if (authResponse.user != null) {
         // 2. Salvar dados do usuário na tabela users
         final userId = authResponse.user!.id;
-        await supabase.from('users').insert({
+        
+        final userInsert = await supabase.from('users').insert({
           'id': userId,
           'name': name,
           'email': email,
           'created_at': DateTime.now().toIso8601String(),
-        });
+        }).select();
+        
+        print('Usuário inserido na tabela: $userInsert');
         
         return true;
       }
@@ -136,10 +140,14 @@ class SupabaseDataService {
   
   static Future<bool> login(String email, String password) async {
     try {
+      print('Tentando fazer login: $email');
+      
       final authResponse = await supabase.auth.signInWithPassword(
         email: email,
         password: password,
       );
+      
+      print('Resposta do login: ${authResponse.user?.id}');
       
       if (authResponse.user != null) {
         // Buscar dados completos do usuário
@@ -149,6 +157,8 @@ class SupabaseDataService {
             .eq('id', authResponse.user!.id)
             .single();
         
+        print('Dados do usuário: $userData');
+        
         _currentUser = User.fromJson({
           'id': userData['id'],
           'name': userData['name'],
@@ -156,6 +166,8 @@ class SupabaseDataService {
           'password': '', // Não armazenar senha
           'created_at': userData['created_at'],
         });
+        
+        print('Usuário logado: ${_currentUser?.name}');
         
         return true;
       }
@@ -170,6 +182,7 @@ class SupabaseDataService {
     try {
       await supabase.auth.signOut();
       _currentUser = null;
+      print('Logout realizado com sucesso');
     } catch (e) {
       print('Erro no logout: $e');
     }
@@ -178,13 +191,20 @@ class SupabaseDataService {
   // REGISTROS DE ÁGUA
   static Future<List<WaterRecord>> getUserWaterRecords() async {
     try {
-      if (_currentUser == null) return [];
+      if (_currentUser == null) {
+        print('Usuário não logado');
+        return [];
+      }
+      
+      print('Buscando registros para usuário: ${_currentUser!.id}');
       
       final data = await supabase
           .from('water_records')
           .select()
           .eq('user_id', _currentUser!.id)
           .order('usage_date', ascending: false);
+      
+      print('Registros encontrados: ${data.length}');
       
       return data.map<WaterRecord>((json) => WaterRecord.fromJson(json)).toList();
     } catch (e) {
@@ -195,7 +215,12 @@ class SupabaseDataService {
   
   static Future<bool> addWaterRecord(WaterRecord record) async {
     try {
-      await supabase.from('water_records').insert(record.toJson());
+      print('Adicionando registro: ${record.toJson()}');
+      
+      final response = await supabase.from('water_records').insert(record.toJson()).select();
+      
+      print('Registro adicionado: $response');
+      
       return true;
     } catch (e) {
       print('Erro ao adicionar registro: $e');
@@ -205,10 +230,15 @@ class SupabaseDataService {
   
   static Future<bool> updateWaterRecord(WaterRecord record) async {
     try {
+      print('Atualizando registro: ${record.id}');
+      
       await supabase
           .from('water_records')
           .update(record.toJson())
           .eq('id', record.id);
+      
+      print('Registro atualizado com sucesso');
+      
       return true;
     } catch (e) {
       print('Erro ao atualizar registro: $e');
@@ -218,10 +248,15 @@ class SupabaseDataService {
   
   static Future<bool> deleteWaterRecord(String recordId) async {
     try {
+      print('Deletando registro: $recordId');
+      
       await supabase
           .from('water_records')
           .delete()
           .eq('id', recordId);
+      
+      print('Registro deletado com sucesso');
+      
       return true;
     } catch (e) {
       print('Erro ao deletar registro: $e');
@@ -234,7 +269,11 @@ class SupabaseDataService {
       if (_currentUser == null) return 0.0;
       
       final records = await getUserWaterRecords();
-      return records.fold<double>(0.0, (sum, record) => sum + record.litersUsed);
+      final total = records.fold<double>(0.0, (sum, record) => sum + record.litersUsed);
+      
+      print('Total de água utilizada: $total L');
+      
+      return total;
     } catch (e) {
       print('Erro ao calcular total: $e');
       return 0.0;
@@ -254,6 +293,8 @@ class SupabaseDataService {
             (categoryUsage[record.category] ?? 0) + record.litersUsed;
       }
       
+      print('Uso por categoria: $categoryUsage');
+      
       return categoryUsage;
     } catch (e) {
       print('Erro ao calcular uso por categoria: $e');
@@ -263,145 +304,11 @@ class SupabaseDataService {
 }
 
 // ===========================================
-// SERVIÇO DE DADOS FIREBASE (ALTERNATIVO)
-// ===========================================
-
-/*
-class FirebaseDataService {
-  static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  static final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
-  static User? _currentUser;
-  
-  static User? get currentUser => _currentUser;
-  
-  static Future<void> initialize() async {
-    await Firebase.initializeApp();
-  }
-  
-  // AUTENTICAÇÃO
-  static Future<bool> register(String name, String email, String password) async {
-    try {
-      // 1. Criar usuário no Firebase Auth
-      final credential = await _auth.createUserWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      
-      if (credential.user != null) {
-        // 2. Salvar dados do usuário no Firestore
-        final userId = credential.user!.uid;
-        await _firestore.collection('users').doc(userId).set({
-          'id': userId,
-          'name': name,
-          'email': email,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-        
-        return true;
-      }
-      return false;
-    } catch (e) {
-      print('Erro no registro: $e');
-      return false;
-    }
-  }
-  
-  static Future<bool> login(String email, String password) async {
-    try {
-      final credential = await _auth.signInWithEmailAndPassword(
-        email: email,
-        password: password,
-      );
-      
-      if (credential.user != null) {
-        // Buscar dados do usuário
-        final userDoc = await _firestore
-            .collection('users')
-            .doc(credential.user!.uid)
-            .get();
-        
-        if (userDoc.exists) {
-          final userData = userDoc.data()!;
-          _currentUser = User.fromJson({
-            'id': userData['id'],
-            'name': userData['name'],
-            'email': userData['email'],
-            'password': '', // Não armazenar senha
-          });
-          return true;
-        }
-      }
-      return false;
-    } catch (e) {
-      print('Erro no login: $e');
-      return false;
-    }
-  }
-  
-  static Future<void> logout() async {
-    try {
-      await _auth.signOut();
-      _currentUser = null;
-    } catch (e) {
-      print('Erro no logout: $e');
-    }
-  }
-  
-  // REGISTROS DE ÁGUA
-  static Future<List<WaterRecord>> getUserWaterRecords() async {
-    try {
-      if (_currentUser == null) return [];
-      
-      final querySnapshot = await _firestore
-          .collection('water_records')
-          .where('userId', isEqualTo: _currentUser!.id)
-          .orderBy('date', descending: true)
-          .get();
-      
-      return querySnapshot.docs
-          .map((doc) => WaterRecord.fromJson({...doc.data(), 'id': doc.id}))
-          .toList();
-    } catch (e) {
-      print('Erro ao buscar registros: $e');
-      return [];
-    }
-  }
-  
-  static Future<bool> addWaterRecord(WaterRecord record) async {
-    try {
-      await _firestore.collection('water_records').add({
-        'userId': record.userId,
-        'litersUsed': record.litersUsed,
-        'category': record.category,
-        'date': Timestamp.fromDate(record.date),
-        'description': record.description,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-      return true;
-    } catch (e) {
-      print('Erro ao adicionar registro: $e');
-      return false;
-    }
-  }
-  
-  static Future<double> getTotalWaterUsage() async {
-    try {
-      final records = await getUserWaterRecords();
-      return records.fold<double>(0.0, (sum, record) => sum + record.litersUsed);
-    } catch (e) {
-      print('Erro ao calcular total: $e');
-      return 0.0;
-    }
-  }
-}
-*/
-
-// ===========================================
-// FACTORY PATTERN - ESCOLHA O SERVIÇO
+// FACTORY PATTERN - PROXY PARA SUPABASE
 // ===========================================
 
 class DataService {
-  // Proxy para o serviço escolhido (Supabase ou Firebase)
+  // Proxy para o serviço Supabase
   
   static User? get currentUser => SupabaseDataService.currentUser;
   
@@ -428,7 +335,6 @@ class DataService {
   static Future<double> getTotalWaterUsage() =>
       SupabaseDataService.getTotalWaterUsage();
       
-  // Método adicional para estatísticas
   static Future<Map<String, double>> getUsageByCategory() =>
       SupabaseDataService.getUsageByCategory();
 }

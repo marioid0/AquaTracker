@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'database.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.initialize();
-
   runApp(AquaTrackerApp());
 }
 
@@ -25,148 +25,6 @@ class AquaTrackerApp extends StatelessWidget {
       home: AuthScreen(),
       debugShowCheckedModeBanner: false,
     );
-  }
-}
-
-// ===========================================
-// MODELOS BÁSICOS (mantidos no main por serem essenciais)
-// ===========================================
-
-class User {
-  String id;
-  String name;
-  String email;
-  String password;
-  
-  User({required this.id, required this.name, required this.email, required this.password});
-  
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'email': email,
-    'password': password,
-  };
-  
-  factory User.fromJson(Map<String, dynamic> json) => User(
-    id: json['id'],
-    name: json['name'],
-    email: json['email'],
-    password: json['password'],
-  );
-}
-
-class WaterRecord {
-  String id;
-  String userId;
-  double litersUsed;
-  String category;
-  DateTime date;
-  String description;
-  
-  WaterRecord({
-    required this.id,
-    required this.userId,
-    required this.litersUsed,
-    required this.category,
-    required this.date,
-    required this.description,
-  });
-  
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'userId': userId,
-    'litersUsed': litersUsed,
-    'category': category,
-    'date': date.toIso8601String(),
-    'description': description,
-  };
-  
-  factory WaterRecord.fromJson(Map<String, dynamic> json) => WaterRecord(
-    id: json['id'],
-    userId: json['userId'],
-    litersUsed: json['litersUsed'].toDouble(),
-    category: json['category'],
-    date: DateTime.parse(json['date']),
-    description: json['description'],
-  );
-}
-
-// ===========================================
-// SERVIÇO DE DADOS TEMPORÁRIO (será movido para database.dart)
-// ===========================================
-
-class DataService {
-  static List<User> _users = [];
-  static List<WaterRecord> _waterRecords = [];
-  static User? _currentUser;
-  
-  static User? get currentUser => _currentUser;
-  
-  static Future<bool> register(String name, String email, String password) async {
-    // Simula delay de rede
-    await Future.delayed(Duration(milliseconds: 500));
-    
-    if (_users.any((user) => user.email == email)) {
-      return false;
-    }
-    
-    User newUser = User(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      name: name,
-      email: email,
-      password: password,
-    );
-    
-    _users.add(newUser);
-    return true;
-  }
-  
-  static Future<bool> login(String email, String password) async {
-    await Future.delayed(Duration(milliseconds: 500));
-    
-    try {
-      User user = _users.firstWhere(
-        (user) => user.email == email && user.password == password,
-      );
-      _currentUser = user;
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
-  
-  static Future<void> logout() async {
-    await Future.delayed(Duration(milliseconds: 200));
-    _currentUser = null;
-  }
-  
-  static Future<List<WaterRecord>> getUserWaterRecords() async {
-    await Future.delayed(Duration(milliseconds: 300));
-    if (_currentUser == null) return [];
-    return _waterRecords.where((record) => record.userId == _currentUser!.id).toList();
-  }
-  
-  static Future<void> addWaterRecord(WaterRecord record) async {
-    await Future.delayed(Duration(milliseconds: 400));
-    _waterRecords.add(record);
-  }
-  
-  static Future<void> updateWaterRecord(WaterRecord updatedRecord) async {
-    await Future.delayed(Duration(milliseconds: 400));
-    int index = _waterRecords.indexWhere((record) => record.id == updatedRecord.id);
-    if (index != -1) {
-      _waterRecords[index] = updatedRecord;
-    }
-  }
-  
-  static Future<void> deleteWaterRecord(String recordId) async {
-    await Future.delayed(Duration(milliseconds: 300));
-    _waterRecords.removeWhere((record) => record.id == recordId);
-  }
-  
-  static Future<double> getTotalWaterUsage() async {
-    final records = await getUserWaterRecords();
-    return records.fold<double>(0.0, (double sum, WaterRecord record) => sum + record.litersUsed);
   }
 }
 
@@ -431,7 +289,7 @@ class _AuthScreenState extends State<AuthScreen> {
           _showError('Email ou senha incorretos');
         }
       } catch (e) {
-        _showError('Erro ao fazer login');
+        _showError('Erro ao fazer login: $e');
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -455,11 +313,15 @@ class _AuthScreenState extends State<AuthScreen> {
             isLogin = true;
             _loginForm = null; // Reset para lazy load
           });
+          // Clear form fields
+          _nameController.clear();
+          _emailController.clear();
+          _passwordController.clear();
         } else {
-          _showError('Email já cadastrado');
+          _showError('Email já cadastrado ou erro no servidor');
         }
       } catch (e) {
-        _showError('Erro ao cadastrar');
+        _showError('Erro ao cadastrar: $e');
       } finally {
         if (mounted) setState(() => _isLoading = false);
       }
@@ -578,6 +440,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     } catch (e) {
+      print('Erro ao carregar dashboard: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -714,10 +577,111 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
         });
       }
     } catch (e) {
+      print('Erro ao carregar registros: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
     }
+  }
+  
+  Future<void> _showAddRecordDialog() async {
+    final _litersController = TextEditingController();
+    final _descriptionController = TextEditingController();
+    String selectedCategory = 'Banho';
+    final categories = ['Banho', 'Cozinha', 'Limpeza', 'Jardim', 'Outros'];
+    
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text('Adicionar Registro'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: _litersController,
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: 'Litros utilizados',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    SizedBox(height: 15),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategory,
+                      decoration: InputDecoration(
+                        labelText: 'Categoria',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: categories.map((String category) {
+                        return DropdownMenuItem<String>(
+                          value: category,
+                          child: Text(category),
+                        );
+                      }).toList(),
+                      onChanged: (String? newValue) {
+                        setState(() {
+                          selectedCategory = newValue!;
+                        });
+                      },
+                    ),
+                    SizedBox(height: 15),
+                    TextFormField(
+                      controller: _descriptionController,
+                      decoration: InputDecoration(
+                        labelText: 'Descrição',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 2,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('Cancelar'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (_litersController.text.isNotEmpty && 
+                        _descriptionController.text.isNotEmpty) {
+                      
+                      final record = WaterRecord(
+                        id: DateTime.now().millisecondsSinceEpoch.toString(),
+                        userId: DataService.currentUser!.id,
+                        litersUsed: double.parse(_litersController.text),
+                        category: selectedCategory,
+                        date: DateTime.now(),
+                        description: _descriptionController.text,
+                      );
+                      
+                      bool success = await DataService.addWaterRecord(record);
+                      Navigator.of(context).pop();
+                      
+                      if (success) {
+                        _loadRecords(); // Recarrega a lista
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Registro adicionado com sucesso!')),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Erro ao adicionar registro')),
+                        );
+                      }
+                    }
+                  },
+                  child: Text('Adicionar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
   
   @override
@@ -773,15 +737,37 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
                              style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     ),
-                    trailing: Icon(Icons.more_vert),
+                    trailing: PopupMenuButton(
+                      itemBuilder: (context) => [
+                        PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text('Excluir'),
+                            ],
+                          ),
+                        ),
+                      ],
+                      onSelected: (value) async {
+                        if (value == 'delete') {
+                          bool success = await DataService.deleteWaterRecord(record.id);
+                          if (success) {
+                            _loadRecords();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Registro excluído com sucesso!')),
+                            );
+                          }
+                        }
+                      },
+                    ),
                   ),
                 );
               },
             ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Implementar dialog de adição
-        },
+        onPressed: _showAddRecordDialog,
         backgroundColor: Color(0xFF1E88E5),
         child: Icon(Icons.add, color: Colors.white),
       ),
