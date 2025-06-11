@@ -1,10 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'database.dart';
+import 'lib/utils/performance_utils.dart';
+import 'lib/widgets/responsive_layout.dart';
+import 'lib/widgets/optimized_widgets.dart';
+import 'lib/services/optimized_database_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Supabase
   await SupabaseConfig.initialize();
+  
+  // Set system UI overlay style
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ),
+  );
+
   runApp(AquaTrackerApp());
 }
 
@@ -15,30 +31,41 @@ class AquaTrackerApp extends StatelessWidget {
       title: 'AquaTracker',
       theme: ThemeData(
         primarySwatch: Colors.blue,
-        primaryColor: Color(0xFF1E88E5),
+        primaryColor: const Color(0xFF1E88E5),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Color(0xFF1E88E5),
+          seedColor: const Color(0xFF1E88E5),
           brightness: Brightness.light,
         ),
-        fontFamily: 'Arial',
+        fontFamily: 'Roboto',
+        // Optimize theme for performance
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
       home: AuthScreen(),
       debugShowCheckedModeBanner: false,
+      // Performance optimizations
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaleFactor: MediaQuery.of(context).textScaleFactor.clamp(0.8, 1.2),
+          ),
+          child: child!,
+        );
+      },
     );
   }
 }
 
 // ===========================================
-// LAZY LOADING - TELAS CARREGADAS SOB DEMANDA
+// OPTIMIZED AUTH SCREEN
 // ===========================================
 
-// Tela de Autenticação - LAZY LOADED
 class AuthScreen extends StatefulWidget {
   @override
   _AuthScreenState createState() => _AuthScreenState();
 }
 
-class _AuthScreenState extends State<AuthScreen> {
+class _AuthScreenState extends State<AuthScreen> with TickerProviderStateMixin {
   bool isLogin = true;
   bool _isLoading = false;
   final _formKey = GlobalKey<FormState>();
@@ -46,16 +73,44 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   
-  // Widgets são criados apenas quando necessários
-  Widget? _loginForm;
-  Widget? _registerForm;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOut,
+    ));
+    
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOutCubic,
+    ));
+    
+    _animationController.forward();
+  }
   
   @override
   void dispose() {
-    // Limpa recursos quando sai da tela
+    _animationController.dispose();
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    PerformanceUtils.dispose();
     super.dispose();
   }
   
@@ -63,7 +118,7 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
@@ -71,17 +126,62 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
         ),
         child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.all(20),
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: Padding(
-                  padding: EdgeInsets.all(20),
-                  child: _buildCurrentForm(), // Lazy loading do formulário
-                ),
-              ),
+          child: ResponsiveLayout(
+            mobile: _buildMobileLayout(),
+            tablet: _buildTabletLayout(),
+            desktop: _buildDesktopLayout(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.all(ResponsiveBreakpoints.getResponsivePadding(context)),
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: SlideTransition(
+            position: _slideAnimation,
+            child: ResponsiveCard(
+              child: _buildForm(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabletLayout() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 500),
+        padding: EdgeInsets.all(ResponsiveBreakpoints.getResponsivePadding(context)),
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: SlideTransition(
+            position: _slideAnimation,
+            child: ResponsiveCard(
+              child: _buildForm(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDesktopLayout() {
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 400),
+        padding: EdgeInsets.all(ResponsiveBreakpoints.getResponsivePadding(context)),
+        child: FadeTransition(
+          opacity: _fadeAnimation,
+          child: SlideTransition(
+            position: _slideAnimation,
+            child: ResponsiveCard(
+              child: _buildForm(),
             ),
           ),
         ),
@@ -89,183 +189,139 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
   
-  // Lazy loading - constrói apenas o formulário necessário
-  Widget _buildCurrentForm() {
-    if (isLogin) {
-      _loginForm ??= _buildLoginForm(); // Cria apenas se não existir
-      return _loginForm!;
-    } else {
-      _registerForm ??= _buildRegisterForm(); // Cria apenas se não existir  
-      return _registerForm!;
-    }
-  }
-  
-  Widget _buildLoginForm() {
+  Widget _buildForm() {
     return Form(
       key: _formKey,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Logo
-          Icon(Icons.water_drop, size: 80, color: Color(0xFF1E88E5)),
-          SizedBox(height: 10),
-          Text('AquaTracker', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5))),
-          Text('Monitore e economize água', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-          SizedBox(height: 30),
-          
-          // Email
-          TextFormField(
-            controller: _emailController,
-            decoration: InputDecoration(
-              labelText: 'Email',
-              prefixIcon: Icon(Icons.email),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            validator: (value) {
-              if (value == null || value.isEmpty) return 'Por favor, insira seu email';
-              if (!value.contains('@')) return 'Email inválido';
-              return null;
-            },
-          ),
-          SizedBox(height: 15),
-          
-          // Senha
-          TextFormField(
-            controller: _passwordController,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'Senha',
-              prefixIcon: Icon(Icons.lock),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            validator: (value) {
-              if (value == null || value.isEmpty) return 'Por favor, insira sua senha';
-              return null;
-            },
-          ),
-          SizedBox(height: 25),
-          
-          // Botão Entrar
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _isLoading ? null : _handleLogin,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF1E88E5),
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: _isLoading 
-                ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                : Text('Entrar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          // Logo with hero animation
+          Hero(
+            tag: 'app_logo',
+            child: Icon(
+              Icons.water_drop, 
+              size: ResponsiveBreakpoints.isMobile(context) ? 60 : 80, 
+              color: const Color(0xFF1E88E5),
             ),
           ),
-          SizedBox(height: 15),
-          
-          // Link para cadastro
-          TextButton(
-            onPressed: () {
-              setState(() {
-                isLogin = false;
-                _registerForm = null; // Reset register form para lazy load
-              });
-            },
-            child: Text('Não tem conta? Cadastre-se', style: TextStyle(color: Color(0xFF1E88E5))),
+          const SizedBox(height: 10),
+          ResponsiveText(
+            isLogin ? 'AquaTracker' : 'Criar Conta',
+            baseFontSize: 28,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold, 
+              color: Color(0xFF1E88E5),
+            ),
           ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildRegisterForm() {
-    return Form(
-      key: _formKey,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Logo
-          Icon(Icons.water_drop, size: 80, color: Color(0xFF1E88E5)),
-          SizedBox(height: 10),
-          Text('Criar Conta', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5))),
-          Text('Junte-se à comunidade sustentável', style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-          SizedBox(height: 30),
+          ResponsiveText(
+            isLogin 
+              ? 'Monitore e economize água' 
+              : 'Junte-se à comunidade sustentável',
+            baseFontSize: 16,
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+          const SizedBox(height: 30),
           
-          // Nome
-          TextFormField(
-            controller: _nameController,
-            decoration: InputDecoration(
+          // Form fields
+          if (!isLogin) ...[
+            OptimizedTextField(
+              controller: _nameController,
               labelText: 'Nome',
-              prefixIcon: Icon(Icons.person),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+              prefixIcon: const Icon(Icons.person),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Por favor, insira seu nome';
+                }
+                return null;
+              },
             ),
-            validator: (value) {
-              if (value == null || value.isEmpty) return 'Por favor, insira seu nome';
-              return null;
-            },
-          ),
-          SizedBox(height: 15),
+            const SizedBox(height: 15),
+          ],
           
-          // Email
-          TextFormField(
+          OptimizedTextField(
             controller: _emailController,
-            decoration: InputDecoration(
-              labelText: 'Email',
-              prefixIcon: Icon(Icons.email),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
+            labelText: 'Email',
+            keyboardType: TextInputType.emailAddress,
+            prefixIcon: const Icon(Icons.email),
             validator: (value) {
-              if (value == null || value.isEmpty) return 'Por favor, insira seu email';
-              if (!value.contains('@')) return 'Email inválido';
+              if (value == null || value.isEmpty) {
+                return 'Por favor, insira seu email';
+              }
+              if (!value.contains('@')) {
+                return 'Email inválido';
+              }
               return null;
             },
           ),
-          SizedBox(height: 15),
+          const SizedBox(height: 15),
           
-          // Senha
-          TextFormField(
+          OptimizedTextField(
             controller: _passwordController,
+            labelText: 'Senha',
             obscureText: true,
-            decoration: InputDecoration(
-              labelText: 'Senha',
-              prefixIcon: Icon(Icons.lock),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-            ),
+            prefixIcon: const Icon(Icons.lock),
             validator: (value) {
-              if (value == null || value.isEmpty) return 'Por favor, insira sua senha';
-              if (value.length < 6) return 'Senha deve ter pelo menos 6 caracteres';
+              if (value == null || value.isEmpty) {
+                return 'Por favor, insira sua senha';
+              }
+              if (!isLogin && value.length < 6) {
+                return 'Senha deve ter pelo menos 6 caracteres';
+              }
               return null;
             },
           ),
-          SizedBox(height: 25),
+          const SizedBox(height: 25),
           
-          // Botão Cadastrar
+          // Submit button
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _isLoading ? null : _handleRegister,
+              onPressed: _isLoading ? null : (isLogin ? _handleLogin : _handleRegister),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF1E88E5),
+                backgroundColor: const Color(0xFF1E88E5),
                 foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: 15),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(vertical: 15),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 2,
               ),
               child: _isLoading 
-                ? CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                : Text('Cadastrar', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white, 
+                      strokeWidth: 2,
+                    ),
+                  )
+                : ResponsiveText(
+                    isLogin ? 'Entrar' : 'Cadastrar',
+                    baseFontSize: 16,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
             ),
           ),
-          SizedBox(height: 15),
+          const SizedBox(height: 15),
           
-          // Link para login
+          // Toggle button
           TextButton(
-            onPressed: () {
+            onPressed: _isLoading ? null : () {
               setState(() {
-                isLogin = true;
-                _loginForm = null; // Reset login form para lazy load
+                isLogin = !isLogin;
+                _formKey.currentState?.reset();
               });
             },
-            child: Text('Já tem conta? Faça login', style: TextStyle(color: Color(0xFF1E88E5))),
+            child: ResponsiveText(
+              isLogin 
+                ? 'Não tem conta? Cadastre-se' 
+                : 'Já tem conta? Faça login',
+              baseFontSize: 14,
+              style: const TextStyle(color: Color(0xFF1E88E5)),
+            ),
           ),
         ],
       ),
@@ -277,14 +333,27 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() => _isLoading = true);
       
       try {
-        bool success = await DataService.login(_emailController.text, _passwordController.text);
+        bool success = await DataService.login(
+          _emailController.text.trim(),
+          _passwordController.text,
+        );
         
         if (success) {
-          // Navega para home e destrói a tela de auth
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => HomeScreen()),
-          );
+          // Preload dashboard data
+          OptimizedDatabaseService.preloadDashboardData();
+          
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              PageRouteBuilder(
+                pageBuilder: (context, animation, secondaryAnimation) => HomeScreen(),
+                transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
+                transitionDuration: const Duration(milliseconds: 300),
+              ),
+            );
+          }
         } else {
           _showError('Email ou senha incorretos');
         }
@@ -302,8 +371,8 @@ class _AuthScreenState extends State<AuthScreen> {
       
       try {
         bool success = await DataService.register(
-          _nameController.text,
-          _emailController.text,
+          _nameController.text.trim(),
+          _emailController.text.trim(),
           _passwordController.text,
         );
         
@@ -311,7 +380,6 @@ class _AuthScreenState extends State<AuthScreen> {
           _showSuccess('Cadastro realizado com sucesso!');
           setState(() {
             isLogin = true;
-            _loginForm = null; // Reset para lazy load
           });
           // Clear form fields
           _nameController.clear();
@@ -329,20 +397,34 @@ class _AuthScreenState extends State<AuthScreen> {
   }
   
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.red),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    }
   }
   
   void _showSuccess(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: Colors.green),
-    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+    }
   }
 }
 
 // ===========================================
-// HOME - CARREGA APENAS A ABA ATIVA
+// OPTIMIZED HOME SCREEN
 // ===========================================
 
 class HomeScreen extends StatefulWidget {
@@ -350,240 +432,102 @@ class HomeScreen extends StatefulWidget {
   _HomeScreenState createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentIndex = 0;
+  late PageController _pageController;
+  late AnimationController _fabAnimationController;
   
-  // LAZY LOADING - Telas são criadas apenas quando acessadas
+  // Lazy-loaded screens
   Widget? _dashboardScreen;
   Widget? _recordsScreen;
   Widget? _profileScreen;
   
   @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+    _fabAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _fabAnimationController.forward();
+  }
+  
+  @override
   void dispose() {
-    // Limpa todas as telas quando sai
-    _dashboardScreen = null;
-    _recordsScreen = null;
-    _profileScreen = null;
+    _pageController.dispose();
+    _fabAnimationController.dispose();
     super.dispose();
   }
   
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _getCurrentScreen(), // Carrega apenas a tela ativa
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _currentIndex,
-        onTap: (index) {
+      body: PageView(
+        controller: _pageController,
+        onPageChanged: (index) {
           setState(() {
             _currentIndex = index;
           });
         },
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: Color(0xFF1E88E5),
-        items: [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-          BottomNavigationBarItem(icon: Icon(Icons.water_drop), label: 'Registros'),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Perfil'),
+        children: [
+          _dashboardScreen ??= DashboardScreen(),
+          _recordsScreen ??= WaterRecordsScreen(),
+          _profileScreen ??= ProfileScreen(),
         ],
       ),
-    );
-  }
-  
-  // LAZY LOADING - Cria tela apenas quando necessário
-  Widget _getCurrentScreen() {
-    switch (_currentIndex) {
-      case 0:
-        _dashboardScreen ??= DashboardScreen(); // Cria apenas se não existir
-        return _dashboardScreen!;
-      case 1:
-        _recordsScreen ??= WaterRecordsScreen();
-        return _recordsScreen!;
-      case 2:
-        _profileScreen ??= ProfileScreen();
-        return _profileScreen!;
-      default:
-        return Container();
-    }
-  }
-}
-
-// ===========================================
-// TELAS SIMPLIFICADAS - LAZY LOADED
-// ===========================================
-
-class DashboardScreen extends StatefulWidget {
-  @override
-  _DashboardScreenState createState() => _DashboardScreenState();
-}
-
-class _DashboardScreenState extends State<DashboardScreen> {
-  double? _totalUsage;
-  List<WaterRecord>? _recentRecords;
-  bool _isLoading = true;
-  
-  @override
-  void initState() {
-    super.initState();
-    _loadDashboardData(); // Carrega dados apenas quando a tela é criada
-  }
-  
-  Future<void> _loadDashboardData() async {
-    try {
-      final totalUsage = await DataService.getTotalWaterUsage();
-      final records = await DataService.getUserWaterRecords();
-      
-      if (mounted) {
-        setState(() {
-          _totalUsage = totalUsage;
-          _recentRecords = records.take(3).toList();
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      print('Erro ao carregar dashboard: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text('Dashboard', style: TextStyle(color: Colors.white)),
-          backgroundColor: Color(0xFF1E88E5),
-        ),
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-    
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Dashboard', style: TextStyle(color: Colors.white)),
-        backgroundColor: Color(0xFF1E88E5),
-      ),
-      body: Container(
+      bottomNavigationBar: Container(
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF1E88E5), Colors.white],
-            stops: [0.0, 0.3],
-          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 10,
+              offset: const Offset(0, -2),
+            ),
+          ],
         ),
-        child: SingleChildScrollView(
-          padding: EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Boas-vindas
-              Text(
-                'Olá, ${DataService.currentUser?.name ?? "Usuário"}!',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-              ),
-              SizedBox(height: 5),
-              Text(
-                'Vamos economizar água juntos 💧',
-                style: TextStyle(fontSize: 16, color: Colors.white70),
-              ),
-              SizedBox(height: 30),
-              
-              // Card de consumo
-              Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: Container(
-                  width: double.infinity,
-                  padding: EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(15),
-                    gradient: LinearGradient(colors: [Color(0xFF42A5F5), Color(0xFF1E88E5)]),
-                  ),
-                  child: Column(
-                    children: [
-                      Icon(Icons.water_drop, size: 50, color: Colors.white),
-                      SizedBox(height: 10),
-                      Text(
-                        '${(_totalUsage ?? 0).toStringAsFixed(1)} L',
-                        style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white),
-                      ),
-                      Text(
-                        'Consumo Total Registrado',
-                        style: TextStyle(fontSize: 16, color: Colors.white70),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SizedBox(height: 20),
-              
-              // Dica do dia (carregada dinamicamente)
-              Card(
-                elevation: 4,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                child: Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.lightbulb, color: Colors.orange),
-                          SizedBox(width: 10),
-                          Text('Dica do Dia', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                      SizedBox(height: 10),
-                      Text(
-                        'Feche a torneira enquanto escova os dentes. Você pode economizar até 12 litros de água por escovação!',
-                        style: TextStyle(fontSize: 14),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
+        child: BottomNavigationBar(
+          currentIndex: _currentIndex,
+          onTap: (index) {
+            _pageController.animateToPage(
+              index,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          },
+          type: BottomNavigationBarType.fixed,
+          selectedItemColor: const Color(0xFF1E88E5),
+          unselectedItemColor: Colors.grey,
+          elevation: 0,
+          items: const [
+            BottomNavigationBarItem(
+              icon: Icon(Icons.dashboard),
+              label: 'Dashboard',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.water_drop),
+              label: 'Registros',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person),
+              label: 'Perfil',
+            ),
+          ],
         ),
       ),
+      floatingActionButton: _currentIndex == 1 
+        ? ScaleTransition(
+            scale: _fabAnimationController,
+            child: FloatingActionButton(
+              onPressed: () => _showAddRecordDialog(),
+              backgroundColor: const Color(0xFF1E88E5),
+              child: const Icon(Icons.add, color: Colors.white),
+            ),
+          )
+        : null,
     );
   }
-}
 
-class WaterRecordsScreen extends StatefulWidget {
-  @override
-  _WaterRecordsScreenState createState() => _WaterRecordsScreenState();
-}
-
-class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
-  List<WaterRecord> records = [];
-  bool _isLoading = true;
-  
-  @override
-  void initState() {
-    super.initState();
-    _loadRecords(); // Carrega apenas quando a tela é criada
-  }
-  
-  Future<void> _loadRecords() async {
-    try {
-      final loadedRecords = await DataService.getUserWaterRecords();
-      if (mounted) {
-        setState(() {
-          records = loadedRecords;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      print('Erro ao carregar registros: $e');
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-  
   Future<void> _showAddRecordDialog() async {
     final _litersController = TextEditingController();
     final _descriptionController = TextEditingController();
@@ -596,25 +540,27 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: Text('Adicionar Registro'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: const Text('Adicionar Registro'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    TextFormField(
+                    OptimizedTextField(
                       controller: _litersController,
-                      keyboardType: TextInputType.numberWithOptions(decimal: true),
-                      decoration: InputDecoration(
-                        labelText: 'Litros utilizados',
-                        border: OutlineInputBorder(),
-                      ),
+                      labelText: 'Litros utilizados',
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     ),
-                    SizedBox(height: 15),
+                    const SizedBox(height: 15),
                     DropdownButtonFormField<String>(
                       value: selectedCategory,
                       decoration: InputDecoration(
                         labelText: 'Categoria',
-                        border: OutlineInputBorder(),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       items: categories.map((String category) {
                         return DropdownMenuItem<String>(
@@ -628,13 +574,10 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
                         });
                       },
                     ),
-                    SizedBox(height: 15),
-                    TextFormField(
+                    const SizedBox(height: 15),
+                    OptimizedTextField(
                       controller: _descriptionController,
-                      decoration: InputDecoration(
-                        labelText: 'Descrição',
-                        border: OutlineInputBorder(),
-                      ),
+                      labelText: 'Descrição',
                       maxLines: 2,
                     ),
                   ],
@@ -643,7 +586,7 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: Text('Cancelar'),
+                  child: const Text('Cancelar'),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -659,22 +602,45 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
                         description: _descriptionController.text,
                       );
                       
-                      bool success = await DataService.addWaterRecord(record);
+                      bool success = await OptimizedDatabaseService.addWaterRecordWithCacheUpdate(record);
                       Navigator.of(context).pop();
                       
                       if (success) {
-                        _loadRecords(); // Recarrega a lista
+                        // Refresh the records screen
+                        if (_recordsScreen is WaterRecordsScreen) {
+                          (_recordsScreen as WaterRecordsScreen).refreshData();
+                        }
+                        
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Registro adicionado com sucesso!')),
+                          SnackBar(
+                            content: const Text('Registro adicionado com sucesso!'),
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
                         );
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Erro ao adicionar registro')),
+                          SnackBar(
+                            content: const Text('Erro ao adicionar registro'),
+                            backgroundColor: Colors.red,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
                         );
                       }
                     }
                   },
-                  child: Text('Adicionar'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1E88E5),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('Adicionar', style: TextStyle(color: Colors.white)),
                 ),
               ],
             );
@@ -683,143 +649,552 @@ class _WaterRecordsScreenState extends State<WaterRecordsScreen> {
       },
     );
   }
+}
+
+// ===========================================
+// OPTIMIZED DASHBOARD SCREEN
+// ===========================================
+
+class DashboardScreen extends StatefulWidget {
+  @override
+  _DashboardScreenState createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> 
+    with AutomaticKeepAliveClientMixin {
+  double? _totalUsage;
+  List<WaterRecord>? _recentRecords;
+  Map<String, double>? _categoryUsage;
+  bool _isLoading = true;
+  
+  @override
+  bool get wantKeepAlive => true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+  
+  Future<void> _loadDashboardData() async {
+    try {
+      PerformanceMonitor.startTimer('dashboard_load');
+      
+      final results = await Future.wait([
+        OptimizedDatabaseService.getCachedTotalWaterUsage(),
+        OptimizedDatabaseService.getCachedUserWaterRecords(),
+        OptimizedDatabaseService.getCachedUsageByCategory(),
+      ]);
+      
+      if (mounted) {
+        setState(() {
+          _totalUsage = results[0] as double;
+          final allRecords = results[1] as List<WaterRecord>;
+          _recentRecords = allRecords.take(3).toList();
+          _categoryUsage = results[2] as Map<String, double>;
+          _isLoading = false;
+        });
+      }
+      
+      PerformanceMonitor.endTimer('dashboard_load');
+    } catch (e) {
+      print('Erro ao carregar dashboard: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
   
   @override
   Widget build(BuildContext context) {
+    super.build(context);
+    
     if (_isLoading) {
       return Scaffold(
         appBar: AppBar(
-          title: Text('Registros de Água', style: TextStyle(color: Colors.white)),
-          backgroundColor: Color(0xFF1E88E5),
+          title: ResponsiveText(
+            'Dashboard',
+            baseFontSize: 20,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: const Color(0xFF1E88E5),
+          elevation: 0,
         ),
-        body: Center(child: CircularProgressIndicator()),
+        body: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF1E88E5),
+          ),
+        ),
+      );
+    }
+    
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1E88E5), Colors.white],
+            stops: [0.0, 0.3],
+          ),
+        ),
+        child: SafeArea(
+          child: ResponsiveContainer(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                setState(() => _isLoading = true);
+                await _loadDashboardData();
+              },
+              color: const Color(0xFF1E88E5),
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const SizedBox(height: 20),
+                    
+                    // Welcome section
+                    ResponsiveText(
+                      'Olá, ${DataService.currentUser?.name ?? "Usuário"}!',
+                      baseFontSize: 24,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    ResponsiveText(
+                      'Vamos economizar água juntos 💧',
+                      baseFontSize: 16,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 30),
+                    
+                    // Total usage card
+                    ResponsiveCard(
+                      child: Container(
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(15),
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF42A5F5), Color(0xFF1E88E5)],
+                          ),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            children: [
+                              const Icon(
+                                Icons.water_drop,
+                                size: 50,
+                                color: Colors.white,
+                              ),
+                              const SizedBox(height: 10),
+                              ResponsiveText(
+                                '${(_totalUsage ?? 0).toStringAsFixed(1)} L',
+                                baseFontSize: 32,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              ResponsiveText(
+                                'Consumo Total Registrado',
+                                baseFontSize: 16,
+                                style: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    
+                    // Category usage
+                    if (_categoryUsage != null && _categoryUsage!.isNotEmpty) ...[
+                      ResponsiveCard(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.pie_chart, color: Color(0xFF1E88E5)),
+                                const SizedBox(width: 10),
+                                ResponsiveText(
+                                  'Uso por Categoria',
+                                  baseFontSize: 18,
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 15),
+                            ..._categoryUsage!.entries.map((entry) => 
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    ResponsiveText(
+                                      entry.key,
+                                      baseFontSize: 14,
+                                    ),
+                                    ResponsiveText(
+                                      '${entry.value.toStringAsFixed(1)} L',
+                                      baseFontSize: 14,
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ).toList(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
+                    
+                    // Tip of the day
+                    ResponsiveCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.lightbulb, color: Colors.orange),
+                              const SizedBox(width: 10),
+                              ResponsiveText(
+                                'Dica do Dia',
+                                baseFontSize: 18,
+                                style: const TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          ResponsiveText(
+                            'Feche a torneira enquanto escova os dentes. Você pode economizar até 12 litros de água por escovação!',
+                            baseFontSize: 14,
+                          ),
+                        ],
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ===========================================
+// OPTIMIZED WATER RECORDS SCREEN
+// ===========================================
+
+class WaterRecordsScreen extends StatefulWidget {
+  @override
+  _WaterRecordsScreenState createState() => _WaterRecordsScreenState();
+
+  // Method to refresh data from parent
+  void refreshData() {
+    // This will be called from the state
+  }
+}
+
+class _WaterRecordsScreenState extends State<WaterRecordsScreen> 
+    with AutomaticKeepAliveClientMixin {
+  List<WaterRecord> records = [];
+  bool _isLoading = true;
+  
+  @override
+  bool get wantKeepAlive => true;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadRecords();
+  }
+  
+  Future<void> _loadRecords() async {
+    try {
+      PerformanceMonitor.startTimer('load_records');
+      
+      final loadedRecords = await OptimizedDatabaseService.getCachedUserWaterRecords(
+        forceRefresh: true,
+      );
+      
+      if (mounted) {
+        setState(() {
+          records = loadedRecords;
+          _isLoading = false;
+        });
+      }
+      
+      PerformanceMonitor.endTimer('load_records');
+    } catch (e) {
+      print('Erro ao carregar registros: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // Public method to refresh data
+  void refreshData() {
+    _loadRecords();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: ResponsiveText(
+            'Registros de Água',
+            baseFontSize: 20,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+          backgroundColor: const Color(0xFF1E88E5),
+          elevation: 0,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(
+            color: Color(0xFF1E88E5),
+          ),
+        ),
       );
     }
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Registros de Água', style: TextStyle(color: Colors.white)),
-        backgroundColor: Color(0xFF1E88E5),
+        title: ResponsiveText(
+          'Registros de Água',
+          baseFontSize: 20,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: const Color(0xFF1E88E5),
+        elevation: 0,
       ),
       body: records.isEmpty
           ? Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.water_drop_outlined, size: 80, color: Colors.grey),
-                  SizedBox(height: 20),
-                  Text('Nenhum registro encontrado', style: TextStyle(fontSize: 18, color: Colors.grey)),
-                  SizedBox(height: 10),
-                  Text('Toque no + para adicionar seu primeiro registro', 
-                       style: TextStyle(fontSize: 14, color: Colors.grey)),
+                  Icon(
+                    Icons.water_drop_outlined,
+                    size: ResponsiveBreakpoints.isMobile(context) ? 60 : 80,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 20),
+                  ResponsiveText(
+                    'Nenhum registro encontrado',
+                    baseFontSize: 18,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 10),
+                  ResponsiveText(
+                    'Toque no + para adicionar seu primeiro registro',
+                    baseFontSize: 14,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
                 ],
               ),
             )
-          : ListView.builder(
-              padding: EdgeInsets.all(10),
-              itemCount: records.length,
-              itemBuilder: (context, index) {
-                WaterRecord record = records[index];
-                return Card(
-                  margin: EdgeInsets.only(bottom: 10),
-                  child: ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Color(0xFF1E88E5),
-                      child: Icon(Icons.water_drop, color: Colors.white),
+          : RefreshIndicator(
+              onRefresh: _loadRecords,
+              color: const Color(0xFF1E88E5),
+              child: OptimizedListView(
+                items: records,
+                itemBuilder: (context, index) {
+                  final record = records[index];
+                  return ResponsiveCard(
+                    margin: EdgeInsets.symmetric(
+                      horizontal: ResponsiveBreakpoints.getResponsivePadding(context),
+                      vertical: 4,
                     ),
-                    title: Text('${record.litersUsed} L - ${record.category}'),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(record.description),
-                        SizedBox(height: 5),
-                        Text('${record.date.day}/${record.date.month}/${record.date.year}',
-                             style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
-                    ),
-                    trailing: PopupMenuButton(
-                      itemBuilder: (context) => [
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete, color: Colors.red),
-                              SizedBox(width: 8),
-                              Text('Excluir'),
-                            ],
+                    child: ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: const Color(0xFF1E88E5),
+                        child: const Icon(Icons.water_drop, color: Colors.white),
+                      ),
+                      title: ResponsiveText(
+                        '${record.litersUsed} L - ${record.category}',
+                        baseFontSize: 16,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ResponsiveText(
+                            record.description,
+                            baseFontSize: 14,
                           ),
-                        ),
-                      ],
-                      onSelected: (value) async {
-                        if (value == 'delete') {
-                          bool success = await DataService.deleteWaterRecord(record.id);
-                          if (success) {
-                            _loadRecords();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Registro excluído com sucesso!')),
-                            );
+                          const SizedBox(height: 5),
+                          ResponsiveText(
+                            '${record.date.day}/${record.date.month}/${record.date.year}',
+                            baseFontSize: 12,
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                      trailing: PopupMenuButton(
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Excluir'),
+                              ],
+                            ),
+                          ),
+                        ],
+                        onSelected: (value) async {
+                          if (value == 'delete') {
+                            bool success = await OptimizedDatabaseService
+                                .deleteWaterRecordWithCacheUpdate(record.id);
+                            if (success) {
+                              _loadRecords();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: const Text('Registro excluído com sucesso!'),
+                                  behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              );
+                            }
                           }
-                        }
-                      },
+                        },
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showAddRecordDialog,
-        backgroundColor: Color(0xFF1E88E5),
-        child: Icon(Icons.add, color: Colors.white),
-      ),
     );
   }
 }
 
-class ProfileScreen extends StatelessWidget {
+// ===========================================
+// OPTIMIZED PROFILE SCREEN
+// ===========================================
+
+class ProfileScreen extends StatelessWidget with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   @override
   Widget build(BuildContext context) {
-    User? user = DataService.currentUser;
+    super.build(context);
+    
+    final user = DataService.currentUser;
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Perfil', style: TextStyle(color: Colors.white)),
-        backgroundColor: Color(0xFF1E88E5),
+        title: ResponsiveText(
+          'Perfil',
+          baseFontSize: 20,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+        backgroundColor: const Color(0xFF1E88E5),
+        elevation: 0,
       ),
-      body: SingleChildScrollView(
-        padding: EdgeInsets.all(20),
+      body: ResponsiveContainer(
         child: Column(
           children: [
-            // Avatar
-            CircleAvatar(
-              radius: 60,
-              backgroundColor: Color(0xFF1E88E5),
-              child: Icon(Icons.person, size: 60, color: Colors.white),
-            ),
-            SizedBox(height: 20),
-            Text(user?.name ?? 'Usuário', 
-                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            Text(user?.email ?? '', 
-                 style: TextStyle(fontSize: 16, color: Colors.grey)),
-            SizedBox(height: 30),
+            const SizedBox(height: 40),
             
-            // Botão de logout
+            // Avatar
+            Hero(
+              tag: 'profile_avatar',
+              child: CircleAvatar(
+                radius: ResponsiveBreakpoints.isMobile(context) ? 50 : 60,
+                backgroundColor: const Color(0xFF1E88E5),
+                child: Icon(
+                  Icons.person,
+                  size: ResponsiveBreakpoints.isMobile(context) ? 50 : 60,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            
+            ResponsiveText(
+              user?.name ?? 'Usuário',
+              baseFontSize: 24,
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            ResponsiveText(
+              user?.email ?? '',
+              baseFontSize: 16,
+              style: const TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 40),
+            
+            // Logout button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () async {
-                  await DataService.logout();
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => AuthScreen()),
-                    (route) => false,
+                  // Show confirmation dialog
+                  final shouldLogout = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: const Text('Confirmar Logout'),
+                      content: const Text('Tem certeza que deseja sair da sua conta?'),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: const Text('Cancelar'),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                          child: const Text('Sair', style: TextStyle(color: Colors.white)),
+                        ),
+                      ],
+                    ),
                   );
+
+                  if (shouldLogout == true) {
+                    await DataService.logout();
+                    OptimizedDatabaseService.clearAllCaches();
+                    
+                    if (context.mounted) {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        PageRouteBuilder(
+                          pageBuilder: (context, animation, secondaryAnimation) => AuthScreen(),
+                          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                            return FadeTransition(opacity: animation, child: child);
+                          },
+                          transitionDuration: const Duration(milliseconds: 300),
+                        ),
+                        (route) => false,
+                      );
+                    }
+                  }
                 },
-                icon: Icon(Icons.logout, color: Colors.white),
-                label: Text('Sair da Conta', style: TextStyle(color: Colors.white)),
+                icon: const Icon(Icons.logout, color: Colors.white),
+                label: ResponsiveText(
+                  'Sair da Conta',
+                  baseFontSize: 16,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
-                  padding: EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
