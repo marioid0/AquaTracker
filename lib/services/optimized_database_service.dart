@@ -3,124 +3,161 @@ import 'cache_service.dart';
 import '../utils/performance_utils.dart';
 
 class OptimizedDatabaseService {
-  // Cached database operations
-  static Future<List<WaterRecord>> getCachedUserWaterRecords({
+  // Cached database operations for policies
+  static Future<List<Policy>> getCachedPolicies({
+    int? limit,
+    int? offset,
     bool forceRefresh = false,
   }) async {
-    const cacheKey = 'user_water_records';
+    final cacheKey = 'policies_${limit ?? 'all'}_${offset ?? 0}';
     
     if (!forceRefresh && CacheService.has(cacheKey)) {
-      final cachedRecords = CacheService.get<List<WaterRecord>>(cacheKey);
-      if (cachedRecords != null) {
-        return cachedRecords;
+      final cachedPolicies = CacheService.get<List<Policy>>(cacheKey);
+      if (cachedPolicies != null) {
+        return cachedPolicies;
       }
     }
 
-    PerformanceMonitor.startTimer('fetch_water_records');
+    PerformanceMonitor.startTimer('fetch_policies');
     
     try {
-      final records = await DataService.getUserWaterRecords();
-      CacheService.set(cacheKey, records, duration: const Duration(minutes: 2));
+      final policies = await DataService.getPolicies(limit: limit, offset: offset);
+      CacheService.set(cacheKey, policies, duration: const Duration(minutes: 2));
       
-      PerformanceMonitor.endTimer('fetch_water_records');
-      return records;
+      PerformanceMonitor.endTimer('fetch_policies');
+      return policies;
     } catch (e) {
-      PerformanceMonitor.endTimer('fetch_water_records');
+      PerformanceMonitor.endTimer('fetch_policies');
       rethrow;
     }
   }
 
-  static Future<double> getCachedTotalWaterUsage({
+  static Future<List<Category>> getCachedCategories({
     bool forceRefresh = false,
   }) async {
-    const cacheKey = 'total_water_usage';
+    const cacheKey = 'categories';
     
     if (!forceRefresh && CacheService.has(cacheKey)) {
-      final cachedTotal = CacheService.get<double>(cacheKey);
-      if (cachedTotal != null) {
-        return cachedTotal;
+      final cachedCategories = CacheService.get<List<Category>>(cacheKey);
+      if (cachedCategories != null) {
+        return cachedCategories;
       }
     }
 
-    PerformanceMonitor.startTimer('calculate_total_usage');
+    PerformanceMonitor.startTimer('fetch_categories');
     
     try {
-      final total = await DataService.getTotalWaterUsage();
-      CacheService.set(cacheKey, total, duration: const Duration(minutes: 1));
+      final categories = await DataService.getCategories();
+      CacheService.set(cacheKey, categories, duration: const Duration(minutes: 5));
       
-      PerformanceMonitor.endTimer('calculate_total_usage');
-      return total;
+      PerformanceMonitor.endTimer('fetch_categories');
+      return categories;
     } catch (e) {
-      PerformanceMonitor.endTimer('calculate_total_usage');
+      PerformanceMonitor.endTimer('fetch_categories');
       rethrow;
     }
   }
 
-  static Future<Map<String, double>> getCachedUsageByCategory({
+  static Future<Map<String, int>> getCachedStatistics({
     bool forceRefresh = false,
   }) async {
-    const cacheKey = 'usage_by_category';
+    const cacheKey = 'statistics';
     
     if (!forceRefresh && CacheService.has(cacheKey)) {
-      final cachedUsage = CacheService.get<Map<String, double>>(cacheKey);
-      if (cachedUsage != null) {
-        return cachedUsage;
+      final cachedStats = CacheService.get<Map<String, int>>(cacheKey);
+      if (cachedStats != null) {
+        return cachedStats;
       }
     }
 
-    PerformanceMonitor.startTimer('calculate_category_usage');
+    PerformanceMonitor.startTimer('calculate_statistics');
     
     try {
-      final usage = await DataService.getUsageByCategory();
-      CacheService.set(cacheKey, usage, duration: const Duration(minutes: 2));
+      final stats = await DataService.getStatistics();
+      CacheService.set(cacheKey, stats, duration: const Duration(minutes: 1));
       
-      PerformanceMonitor.endTimer('calculate_category_usage');
-      return usage;
+      PerformanceMonitor.endTimer('calculate_statistics');
+      return stats;
     } catch (e) {
-      PerformanceMonitor.endTimer('calculate_category_usage');
+      PerformanceMonitor.endTimer('calculate_statistics');
       rethrow;
     }
   }
 
   // Batch operations for better performance
-  static Future<bool> addWaterRecordWithCacheUpdate(WaterRecord record) async {
-    PerformanceMonitor.startTimer('add_water_record');
+  static Future<bool> addPolicyWithCacheUpdate(Policy policy) async {
+    PerformanceMonitor.startTimer('add_policy');
     
     try {
-      final success = await DataService.addWaterRecord(record);
+      final success = await DataService.addPolicy(policy);
       
       if (success) {
         // Invalidate related caches
-        CacheService.remove('user_water_records');
-        CacheService.remove('total_water_usage');
-        CacheService.remove('usage_by_category');
+        _invalidatePolicyCaches();
       }
       
-      PerformanceMonitor.endTimer('add_water_record');
+      PerformanceMonitor.endTimer('add_policy');
       return success;
     } catch (e) {
-      PerformanceMonitor.endTimer('add_water_record');
+      PerformanceMonitor.endTimer('add_policy');
       rethrow;
     }
   }
 
-  static Future<bool> deleteWaterRecordWithCacheUpdate(String recordId) async {
-    PerformanceMonitor.startTimer('delete_water_record');
+  static Future<bool> updatePolicyWithCacheUpdate(Policy policy) async {
+    PerformanceMonitor.startTimer('update_policy');
     
     try {
-      final success = await DataService.deleteWaterRecord(recordId);
+      final success = await DataService.updatePolicy(policy);
       
       if (success) {
         // Invalidate related caches
-        CacheService.remove('user_water_records');
-        CacheService.remove('total_water_usage');
-        CacheService.remove('usage_by_category');
+        _invalidatePolicyCaches();
       }
       
-      PerformanceMonitor.endTimer('delete_water_record');
+      PerformanceMonitor.endTimer('update_policy');
       return success;
     } catch (e) {
-      PerformanceMonitor.endTimer('delete_water_record');
+      PerformanceMonitor.endTimer('update_policy');
+      rethrow;
+    }
+  }
+
+  static Future<bool> deletePolicyWithCacheUpdate(String policyId) async {
+    PerformanceMonitor.startTimer('delete_policy');
+    
+    try {
+      final success = await DataService.deletePolicy(policyId);
+      
+      if (success) {
+        // Invalidate related caches
+        _invalidatePolicyCaches();
+      }
+      
+      PerformanceMonitor.endTimer('delete_policy');
+      return success;
+    } catch (e) {
+      PerformanceMonitor.endTimer('delete_policy');
+      rethrow;
+    }
+  }
+
+  static Future<bool> addCategoryWithCacheUpdate(Category category) async {
+    PerformanceMonitor.startTimer('add_category');
+    
+    try {
+      final success = await DataService.addCategory(category);
+      
+      if (success) {
+        // Invalidate related caches
+        CacheService.remove('categories');
+        CacheService.remove('statistics');
+      }
+      
+      PerformanceMonitor.endTimer('add_category');
+      return success;
+    } catch (e) {
+      PerformanceMonitor.endTimer('add_category');
       rethrow;
     }
   }
@@ -128,14 +165,29 @@ class OptimizedDatabaseService {
   // Preload data for better UX
   static Future<void> preloadDashboardData() async {
     await Future.wait([
-      getCachedTotalWaterUsage(),
-      getCachedUserWaterRecords(),
-      getCachedUsageByCategory(),
+      getCachedStatistics(),
+      getCachedPolicies(limit: 5),
+      getCachedCategories(),
     ]);
   }
 
   // Clear all caches
   static void clearAllCaches() {
     CacheService.clear();
+  }
+
+  // Helper method to invalidate policy-related caches
+  static void _invalidatePolicyCaches() {
+    // Remove all policy-related cache entries
+    final cacheStats = CacheService.getStats();
+    final allKeys = cacheStats['keys'] as List<String>? ?? [];
+    
+    for (final key in allKeys) {
+      if (key.startsWith('policies_')) {
+        CacheService.remove(key);
+      }
+    }
+    
+    CacheService.remove('statistics');
   }
 }
